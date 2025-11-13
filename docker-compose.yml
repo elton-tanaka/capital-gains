@@ -1,0 +1,7 @@
+services:
+  capital-gains:
+    build: .
+    image: capital-gains
+    container_name: capital-gains
+    stdin_open: true      # keep stdin open
+    tty: false            # we just need plain stdin/stdout
