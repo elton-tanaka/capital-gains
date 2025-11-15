@@ -1,75 +1,76 @@
-from typing import List, Dict, Any
+from typing import List
+from .domain import Operation, OperationType, TaxResult
 
-def process_operations(operations: List[Dict[str, Any]]) -> List[Dict[str, float]]:
-    taxes: List[Dict[str, float]] = []
+TAX_RATE = 0.20
+TAX_FREE_THRESHOLD = 20000.0
 
-    # Estado interno da simulação (por linha de input)
-    wa = 0.0                 # média ponderada de compra
-    qty_shares = 0           # quantidade total de ações em carteira
-    accumulated_loss = 0.0   # prejuízo acumulado (para abater lucros futuros)
 
-    for op in operations:
-        op_type = op["operation"]
-        unit_cost = op["unit-cost"]
-        quantity = op["quantity"]
+class CapitalGainsCalculator:
+    def __init__(
+        self,
+        tax_rate: float = TAX_RATE,
+        tax_free_threshold: float = TAX_FREE_THRESHOLD,
+    ) -> None:
+        self.tax_rate = tax_rate
+        self.tax_free_threshold = tax_free_threshold
+        self._reset_state()
 
-        if op_type == "buy":
-            # Nenhum imposto em compra
-            taxes.append({"tax": 0.0})
+    def _reset_state(self) -> None:
+        self.weighted_average = 0.0
+        self.shares = 0               # quantity of shares
+        self.accumulated_loss = 0.0
 
-            # Recalcula média ponderada:
-            # nova_media = ((qt_atual * media_atual) + (qt_compra * preco_compra)) / (qt_atual + qt_compra)
-            if qty_shares == 0:
-                wa = unit_cost
+    def process_operations(self, operations: List[Operation]) -> List[TaxResult]:
+        # every line of input is independent
+        self._reset_state()
+        results: List[TaxResult] = []
+
+        for op in operations:
+            if op.type == OperationType.BUY:
+                results.append(self._handle_buy(op))
             else:
-                wa = ((qty_shares * wa) + (quantity * unit_cost)) / (qty_shares + quantity)
+                results.append(self._handle_sell(op))
 
-            qty_shares += quantity
+        return results
 
-        elif op_type == "sell":
-            # Valor total da operação
-            total_value = unit_cost * quantity
+    def _handle_buy(self, op: Operation) -> TaxResult:
+        # no tax here
+        if self.shares == 0:
+            self.weighted_average = op.unit_cost
+        else:
+            self.weighted_average = (
+                (self.shares * self.weighted_average)
+                + (op.quantity * op.unit_cost)
+            ) / (self.shares + op.quantity)
 
-            # Lucro (ou prejuízo) da operação em relação à média ponderada
-            # lucro > 0  => lucro
-            # lucro < 0  => prejuízo
-            profit = (unit_cost - wa) * quantity
+        self.shares += op.quantity
+        return TaxResult(tax=0.0)
 
-            tax = 0.0
+    def _handle_sell(self, op: Operation) -> TaxResult:
+        total_value = op.unit_cost * op.quantity
+        profit = (op.unit_cost - self.weighted_average) * op.quantity
+        tax = 0.0
 
-            if total_value <= 20000:
-                # Regra: se valor total da operação <= 20k
-                # - não paga imposto
-                # - se deu lucro, NÃO desconta dos prejuízos acumulados
-                # - se deu prejuízo, acumula para abater lucros futuros
-                if profit < 0:
-                    accumulated_loss += -profit  # adiciona prejuízo
-                tax = 0.0
-            else:
-                # Valor da operação > 20k: aqui pode haver imposto
-                if profit > 0:
-                    # Antes de calcular imposto, abate prejuízos acumulados
-                    if accumulated_loss >= profit:
-                        # Prejuízo cobre todo o lucro -> ainda não paga imposto
-                        accumulated_loss -= profit
-                        tax = 0.0
-                    else:
-                        # Parte do lucro vira lucro tributável
-                        taxable_profit = profit - accumulated_loss
-                        accumulated_loss = 0.0
-                        tax = taxable_profit * 0.20  # 20% sobre o lucro
-                elif profit < 0:
-                    # Prejuízo: acumula
-                    accumulated_loss += -profit
+        if total_value <= self.tax_free_threshold:
+            # Operations below 20k dont get taxed
+            # profit dont lower losses but losses do get added to accumulated losses
+            if profit < 0:
+                self.accumulated_loss += -profit
+        else:
+            # Operations above 20k can get taxed
+            if profit > 0:
+                # lower previous losses before taxing
+                if self.accumulated_loss >= profit:
+                    self.accumulated_loss -= profit
                     tax = 0.0
                 else:
-                    # lucro == 0 -> sem imposto, sem mexer no prejuízo
-                    tax = 0.0
+                    taxable_profit = profit - self.accumulated_loss
+                    self.accumulated_loss = 0.0
+                    tax = taxable_profit * self.tax_rate
+            elif profit < 0:
+                # losses accumulate
+                self.accumulated_loss += -profit
+                tax = 0.0
 
-            qty_shares -= quantity
-
-            # Se quiser arredondar o imposto para 2 casas:
-            # tax = round(tax, 2)
-            taxes.append({"tax": tax})
-
-    return taxes
+        self.shares -= op.quantity
+        return TaxResult(tax=tax)

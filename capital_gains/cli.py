@@ -1,19 +1,25 @@
 import sys
 import json
-from .calculator import process_operations
+
+from .parsers import parse_operations, serialize_results
+from .calculator import CapitalGainsCalculator
 
 
 def main() -> None:
+    calculator = CapitalGainsCalculator()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
-            # Empty line = end of input according to spec
+            # empty line = end of input
             break
 
-        operations = json.loads(line)
-        taxes = process_operations(operations)
-        # taxes must be a list of dicts: [{ "tax": 0.0 }, ...]
-        print(json.dumps(taxes))
+        raw_operations = json.loads(line)
+        operations = parse_operations(raw_operations)
+        results = calculator.process_operations(operations)
+        output = serialize_results(results)
+
+        print(json.dumps(output))
 
 
 if __name__ == "__main__":
